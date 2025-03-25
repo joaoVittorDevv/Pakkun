@@ -47,7 +47,14 @@ venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### 4️⃣ Executar o projeto:
+### 4️⃣ Indexar os dados:
+
+```sh
+python scripts/code_indexer.py --folder <caminho_da_pasta>
+```
+
+
+### 5️⃣ Executar o projeto:
 
 ```sh
 streamlit run src/app.py
