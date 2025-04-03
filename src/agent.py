@@ -4,8 +4,9 @@ from langchain.memory import ConversationBufferMemory
 from tools import python_repl, retriever_tool, brave_tool, stackexchange_tool
 from embeddings import llm
 
-agent_prompt = ChatPromptTemplate.from_messages(
-    [
+agent_prompt = ChatPromptTemplate(
+    input_variables=["input"],
+    messages=[
         (
             "system",
             """Você é Pakkun, um assistente especialista em desenvolvimento de software, dedicado a apoiar desenvolvedores experientes e iniciantes em seus desafios diários com Django, React e tecnologias relacionadas, incluindo Docker, bancos de dados, testes unitários, entre outras. Seu objetivo é fornecer assistência personalizada e amigável, utilizando seu profundo conhecimento dos códigos do projeto atual.
@@ -41,7 +42,7 @@ Lembre-se: você é um aliado próximo do usuário, oferecendo assistência prec
     ]
 )
 
-memory = ConversationBufferMemory(return_messages=True, memory_key="chat_history")
+memory = ConversationBufferMemory(return_messages=True, memory_key="chat_history", output_key='output')
 
 agent = create_tool_calling_agent(
     llm, [python_repl, retriever_tool, brave_tool, stackexchange_tool], agent_prompt
