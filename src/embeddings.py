@@ -1,68 +1,87 @@
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_chroma import Chroma
-from langchain.retrievers.self_query.base import SelfQueryRetriever
-from langchain.chains.query_constructor.schema import AttributeInfo
-from langchain_groq import ChatGroq
+from sentence_transformers import SentenceTransformer
+from chromadb import PersistentClient
+from groq import Groq
+from crewai.tools.base_tool import BaseTool
+from typing import List, Optional, Any, Dict
 from config import EMBEDDINGS_MODEL, DEVICE, LLM_MODEL
 
-embeddings = HuggingFaceEmbeddings(
-    model_name=EMBEDDINGS_MODEL,
-    model_kwargs={"device": DEVICE},
-    encode_kwargs={"normalize_embeddings": True},
-)
 
-chroma = Chroma(
-    persist_directory="./chroma_db",
-    embedding_function=embeddings,
-    collection_name="code_collection",
-)
+# Embedding model configuration
+embeddings_model = SentenceTransformer(EMBEDDINGS_MODEL, device=DEVICE)
 
-llm = ChatGroq(
-    model=LLM_MODEL,
-    temperature=0,
-    max_tokens=None,
-    timeout=None,
-    max_retries=2,
-)
+# ChromaDB persistent client
+chroma_client = PersistentClient(path="./chroma_db")
+collection = chroma_client.get_or_create_collection("code_collection")
 
-metadata_info = [
-    AttributeInfo(
-        name="source",
-        description="Caminho relativo do arquivo a partir do diretório base",
-        type="string",
-    ),
-    AttributeInfo(
-        name="ext",
-        description="Extensão do arquivo sem o ponto (ex: 'py', 'js', 'md')",
-        type="string",
-    ),
-    AttributeInfo(
-        name="full_path",
-        description="Caminho completo do arquivo no sistema",
-        type="string",
-    ),
-    AttributeInfo(
-        name="file_size",
-        description="Tamanho do conteúdo em número de caracteres",
-        type="integer",
-    ),
-    AttributeInfo(
-        name="file_type",
-        description="Tipo do arquivo: 'code', 'document' ou 'data'",
-        type="string",
-    ),
-    AttributeInfo(
-        name="language",
-        description="Linguagem do código (ex: 'python', 'javascript')",
-        type="string",
-    ),
-    AttributeInfo(
-        name="is_chunk",
-        description="Indica se o documento é um chunk do original (True ou False)",
-        type="boolean",
-    ),
-]
+# LLM configuration using Groq
+llm = Groq(model=LLM_MODEL)
 
-retriever = SelfQueryRetriever.from_llm(
-    llm, chroma, "Django/React app codes", metadata_info, verbose=True
-)
+
+class ChromaRetriever:
+    """Simple retriever compatible with CrewAI."""
+
+    def __init__(
+        self,
+        collection_name: str = "code_collection",
+        persist_directory: str = "./chroma_db",
+        embedding_model: Any = embeddings_model,
+        k: int = 5,
+    ) -> None:
+        self.collection_name = collection_name
+        self.persist_directory = persist_directory
+        self.embedding_model = embedding_model
+        self.k = k
+        self.client = chroma_client
+        self.collection = collection
+
+    def search(self, query: str, k: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Return documents matching the query."""
+        if k is None:
+            k = self.k
+
+        query_embedding = self.embedding_model.encode(query).tolist()
+        results = self.collection.query(
+            query_embeddings=[query_embedding],
+            n_results=k,
+            include=["documents", "metadatas", "distances"],
+        )
+
+        documents: List[Dict[str, Any]] = []
+        for i in range(len(results["documents"][0])):
+            documents.append(
+                {
+                    "content": results["documents"][0][i],
+                    "metadata": results["metadatas"][0][i] if results["metadatas"][0] else {},
+                    "score": 1.0 - results["distances"][0][i] if results["distances"][0] else 0.0,
+                }
+            )
+        return documents
+
+    def invoke(self, query: str) -> str:
+        docs = self.search(query)
+        return "\n\n".join(
+            [
+                f"**Documento de {d['metadata'].get('full_path', 'desconhecido')}**\n"
+                f"Relevância: {d['score']:.2f}\n\n{d['content']}"
+                for d in docs
+            ]
+        )
+
+    def as_tool(self) -> BaseTool:
+        from crewai.tools import Tool
+
+        return Tool(
+            name="retriever_tool",
+            description=(
+                "Use essa ferramenta para buscar informações específicas dentro do "
+                "contexto completo dos arquivos do projeto, incluindo Django, React, "
+                "Docker, bancos de dados, testes e outras tecnologias associadas. "
+                "Ideal para entender estruturas, padrões de projeto e esclarecer "
+                "dúvidas técnicas sobre o código existente."
+            ),
+            func=self.invoke,
+        )
+
+
+retriever = ChromaRetriever()
+
