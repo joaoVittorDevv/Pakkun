@@ -1,13 +1,12 @@
 import argparse
 import logging
 import os
-from typing import List, Dict, Optional, Tuple
+from dataclasses import dataclass
+from typing import Dict, List
+
 import chardet
-import torch
-from langchain.schema import Document
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_chroma import Chroma
+from chromadb import PersistentClient
+from sentence_transformers import SentenceTransformer
 
 EMBEDDINGS_MODEL = "sentence-transformers/all-mpnet-base-v2"
 PERSIST_DIR = "./chroma_db"
@@ -67,29 +66,40 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class Document:
+    page_content: str
+    metadata: Dict[str, any]
+
+
+class SimpleTextSplitter:
+    def __init__(self, chunk_size: int = CHUNK_SIZE, chunk_overlap: int = CHUNK_OVERLAP) -> None:
+        self.chunk_size = chunk_size
+        self.chunk_overlap = chunk_overlap
+
+    def split_text(self, text: str) -> List[str]:
+        chunks = []
+        start = 0
+        length = len(text)
+        while start < length:
+            end = min(start + self.chunk_size, length)
+            chunks.append(text[start:end])
+            start = end - self.chunk_overlap
+            if start < 0:
+                start = 0
+        return chunks
+
+
 class CodeIndexer:
-    def __init__(
-        self,
-        embeddings_model: str = "sentence-transformers/all-mpnet-base-v2",
-        persist_dir: str = "./chroma_db",
-        device: Optional[str] = None,
-    ):
+    def __init__(self, embeddings_model: str = EMBEDDINGS_MODEL, persist_dir: str = PERSIST_DIR) -> None:
         self.persist_dir = persist_dir
-        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-
-        self.embeddings = HuggingFaceEmbeddings(
-            model_name=embeddings_model,
-            model_kwargs={"device": self.device},
-            encode_kwargs={"normalize_embeddings": True},
-        )
-
-        self.splitter = RecursiveCharacterTextSplitter(
-            chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP
-        )
-
+        self.embeddings = SentenceTransformer(embeddings_model)
+        self.splitter = SimpleTextSplitter()
+        self.client = PersistentClient(path=self.persist_dir)
+        self.collection = self.client.get_or_create_collection("code_collection")
         self.stats = {"loaded": 0, "skipped_ext": 0, "skipped_size": 0, "error": 0}
         self.indexed_files_path = os.path.join(persist_dir, "indexed_files.txt")
-        self.indexed_files = []
+        self.indexed_files: List[str] = []
 
     def load_documents_from_folder(self, folder_path: str) -> Dict[str, List[Document]]:
         logging.info(f"Carregando documentos do diretório: {folder_path}")
@@ -106,7 +116,7 @@ class CodeIndexer:
                 full_path = os.path.join(root, file)
                 if os.path.getsize(full_path) > MAX_FILE_SIZE:
                     logging.warning(f"Arquivo grande ignorado: {full_path}")
-                    self.stats["skipped_size"] = self.stats.get("skipped_size", 0) + 1
+                    self.stats["skipped_size"] += 1
                     continue
 
                 with open(full_path, "rb") as f:
@@ -118,13 +128,7 @@ class CodeIndexer:
                 documents: List[Document] = []
                 for idx, chunk in enumerate(chunks):
                     documents.append(
-                        Document(
-                            page_content=chunk,
-                            metadata={
-                                "full_path": full_path,
-                                "chunk_id": idx,
-                            },
-                        )
+                        Document(page_content=chunk, metadata={"full_path": full_path, "chunk_id": idx})
                     )
 
                 docs_by_file[full_path] = documents
@@ -138,38 +142,30 @@ class CodeIndexer:
             if not docs:
                 continue
             all_docs.extend(docs)
-            indexed_file_name = os.path.relpath(file_path)
-            self.indexed_files.append(indexed_file_name)
+            self.indexed_files.append(os.path.relpath(file_path))
 
         if all_docs:
-            Chroma.from_documents(
-                documents=all_docs,
-                embedding=self.embeddings,
-                persist_directory=self.persist_dir,
-                collection_name="code_collection",
-            )
+            documents = [d.page_content for d in all_docs]
+            metadatas = [d.metadata for d in all_docs]
+            ids = [f"{md['full_path']}_{md['chunk_id']}" for md in metadatas]
+            embeddings = self.embeddings.encode(documents).tolist()
+            self.collection.add(ids=ids, documents=documents, metadatas=metadatas, embeddings=embeddings)
+            self.client.persist()
 
         self._save_indexed_files()
 
     def _save_indexed_files(self):
-        indexed_files_path = os.path.join(self.persist_dir, "indexed_files.txt")
-        with open(indexed_files_path, "w") as f:
+        with open(self.indexed_files_path, "w") as f:
             for file_name in self.indexed_files:
                 f.write(file_name + "\n")
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-
     parser = argparse.ArgumentParser(description="Indexador de código usando ChromaDB.")
-    parser.add_argument(
-        "--folder", required=True, help="Pasta contendo os arquivos a serem indexados."
-    )
-
+    parser.add_argument("--folder", required=True, help="Pasta contendo os arquivos a serem indexados.")
     args = parser.parse_args()
 
     indexer = CodeIndexer()
-
     processed_docs = indexer.load_documents_from_folder(args.folder)
     indexer.index_documents(processed_docs)
 

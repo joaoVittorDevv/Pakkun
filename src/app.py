@@ -1,5 +1,5 @@
 import streamlit as st
-from agent import get_agent_executor
+from crew_setup import get_crew, run_crew
 
 
 st.set_page_config("Pakkun - Assistente de Código", "🐕", "centered")
@@ -50,7 +50,7 @@ if "chat_history" not in st.session_state:
         }
     ]
 
-agent_executor = get_agent_executor()
+
 
 
 def render_message(content):
@@ -77,11 +77,24 @@ if question := st.chat_input("Digite sua pergunta sobre o código"):
         render_message(question)
 
     with st.chat_message("assistant"):
-        with st.spinner("Pensando..."):
-            response = agent_executor.invoke({"input": question}).get(
-                "output", "Não consegui processar sua pergunta."
-            )
+        with st.spinner("A crew está trabalhando na sua pergunta..."):
+            formatted_history = []
+            if len(st.session_state.chat_history) > 1:
+                for msg in st.session_state.chat_history[:-1]:
+                    formatted_history.append(f"{msg['role']}: {msg['content']}")
+                formatted_history = "\n".join(formatted_history)
+            else:
+                formatted_history = None
+
+            crew = get_crew(question, formatted_history)
+
+            try:
+                result = run_crew(crew)
+                response = result.last_task_output
+                if not response:
+                    response = "Não consegui processar sua pergunta."
+            except Exception as e:
+                response = f"Ocorreu um erro ao processar sua pergunta: {str(e)}"
+
             render_message(response)
-            st.session_state.chat_history.append(
-                {"role": "assistant", "content": response}
-            )
+            st.session_state.chat_history.append({"role": "assistant", "content": response})

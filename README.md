@@ -1,6 +1,6 @@
 # 🐕 Pakkun Project - Assistente de Código com RAG Avançado
 
-Pakkun é um assistente inteligente de código que utiliza técnicas avançadas de RAG (**Retrieval Augmented Generation**) para fornecer respostas precisas sobre sua base de código. O projeto utiliza **ChromaDB** como banco de dados vetorial local com **coleções individuais por arquivo** e **Streamlit** para a interface interativa.
+Pakkun é um assistente inteligente de código que utiliza técnicas avançadas de RAG (**Retrieval Augmented Generation**) para fornecer respostas precisas sobre sua base de código. A orquestração agora foi totalmente reescrita utilizando **CrewAI**, mantendo **ChromaDB** como banco vetorial local (coleções individuais por arquivo) e **Streamlit** para a interface interativa.
 
 ## 📊 Funcionalidades
 
@@ -60,7 +60,24 @@ python scripts/code_indexer.py --folder <caminho_da_pasta>
 streamlit run src/app.py
 ```
 
+#### Exemplo de uso
+
+```text
+Usuário: Use a retriever_tool para abrir o README.md
+
+Assistente:
+Conteúdo do README exibido...
+<think>
+Detalhes sobre como o documento foi localizado e processado
+</think>
+```
+
 A aplicação abrirá automaticamente em seu navegador padrão.
+
+Esta versão reestruturada utiliza a biblioteca **CrewAI** para coordenar uma
+"crew" de agentes especializados. Todas as funcionalidades da versão original
+foram preservadas, mas agora o processamento das perguntas é dividido entre
+agentes de leitura, interpretação e geração de respostas.
 
 ## 📂 Estrutura do Projeto
 
@@ -69,7 +86,7 @@ PakkunProject/
 ├── scripts/          # Scripts auxiliares
 │   └── code_indexer.py        # Indexador dos códigos
 ├── src/              # Código fonte principal
-│   └── agent.py        # Agente
+│   └── crew_setup.py   # Definição da crew de agentes
 │   └── app.py        # Aplicação Streamlit
 │   └── config.py        # Configurações do projeto
 │   └── embeddings.py        # Criador dos embeddings e do retriever
