@@ -114,14 +114,21 @@ class CodeIndexer:
                 encoding = chardet.detect(raw_data)["encoding"] or "utf-8"
                 text = raw_data.decode(encoding, errors="replace")
 
-                document = Document(
-                    page_content=text,
-                    metadata={
-                        "full_path": full_path,
-                    },
-                )
-                docs_by_file[full_path] = [document]
-                self.stats["loaded"] += 1
+                chunks = self.splitter.split_text(text)
+                documents: List[Document] = []
+                for idx, chunk in enumerate(chunks):
+                    documents.append(
+                        Document(
+                            page_content=chunk,
+                            metadata={
+                                "full_path": full_path,
+                                "chunk_id": idx,
+                            },
+                        )
+                    )
+
+                docs_by_file[full_path] = documents
+                self.stats["loaded"] += len(documents)
 
         return docs_by_file
 
@@ -165,6 +172,5 @@ if __name__ == "__main__":
 
     processed_docs = indexer.load_documents_from_folder(args.folder)
     indexer.index_documents(processed_docs)
-    indexer._save_indexed_files()
 
     logging.info("Indexação concluída.")
